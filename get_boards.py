@@ -1,8 +1,16 @@
 import requests
+import os
+from dotenv import load_dotenv
 
-ACCESS_TOKEN = "pina_AMAXN4QXAANT6BYAGCAOWD6FBA7CLHQBQBIQC4GQAXGZ47MAGZZJQUQJJ4RK76HQTV3WFH74CBWVTPNTPCECVT3SU5XRY4YA"
+load_dotenv()
+
+ACCESS_TOKEN = os.getenv("PINTEREST_ACCESS_TOKEN")
 
 def get_boards():
+    if not ACCESS_TOKEN:
+        print("ERROR: PINTEREST_ACCESS_TOKEN not set in .env file")
+        return
+
     url = "https://api.pinterest.com/v5/boards"
     headers = {
         "Authorization": "Bearer " + ACCESS_TOKEN
@@ -18,6 +26,7 @@ def get_boards():
         print("\nYour Boards:")
         for board in data["items"]:
             print(f"Name: {board['name']}, ID: {board['id']}")
+        print("\n👉 Copy your Board ID and paste it into your .env file as PINTEREST_BOARD_ID")
     else:
         print("\nNo boards found. Go to Pinterest and create a board first!")
 

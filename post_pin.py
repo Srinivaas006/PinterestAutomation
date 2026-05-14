@@ -3,10 +3,14 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import time
+import os
+from dotenv import load_dotenv
 
-ACCESS_TOKEN = "pina_AMAXN4QXAANT6BYAGCAOWDYOH3SBFHQBQBIQCG5CBZXTPWI2N7NSK7IY5JKB3MXBIUG7YYUH3M3WP2ETEJ4Z3SWM2NXJCVYA"
-SHEET_NAME = "Pinterest Products"
-BOARD_ID = "YOUR_BOARD_ID"
+load_dotenv()
+
+ACCESS_TOKEN = os.getenv("PINTEREST_ACCESS_TOKEN")
+BOARD_ID = os.getenv("PINTEREST_BOARD_ID")
+SHEET_NAME = os.getenv("SHEET_NAME", "Pinterest Products")
 
 def connect_google_sheets():
     scope = [
@@ -48,6 +52,14 @@ def create_pin(board_id, title, description, link, image_url):
         return False
 
 def post_all_pins():
+    # Validate env vars
+    if not ACCESS_TOKEN:
+        print("ERROR: PINTEREST_ACCESS_TOKEN not set in .env file")
+        return
+    if not BOARD_ID or BOARD_ID == "your_board_id_here":
+        print("ERROR: PINTEREST_BOARD_ID not set in .env — run get_boards.py first")
+        return
+
     print("Loading products from Google Sheets...")
     try:
         df = load_from_sheet()
@@ -65,17 +77,22 @@ def post_all_pins():
         link = row.get('affiliate_link', '')
         description = row.get('description', '')
 
+        if not title or not image_url:
+            print(f"[SKIP] Row {index + 1} missing title or image_url")
+            failed_count += 1
+            continue
+
         if create_pin(BOARD_ID, title, description, link, image_url):
             success_count += 1
-            time.sleep(2)
         else:
             failed_count += 1
-        time.sleep(1)
+
+        time.sleep(2)  # Rate limiting
 
     print(f"\n{'='*50}")
     print(f"COMPLETED!")
     print(f"Success: {success_count}")
-    print(f"Failed: {failed_count}")
+    print(f"Failed:  {failed_count}")
     print(f"{'='*50}")
 
 if __name__ == "__main__":
