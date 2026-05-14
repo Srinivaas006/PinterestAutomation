@@ -1,9 +1,10 @@
 services:
-  - type: web
-    name: pinterest-bot
+  - type: cron
+    name: pinterest-auto-poster
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    schedule: "*/5 * * * *"   # Runs every 5 minutes
+    startCommand: python post_pin.py
     envVars:
       - key: PINTEREST_ACCESS_TOKEN
         sync: false

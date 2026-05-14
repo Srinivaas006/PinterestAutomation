@@ -1,9 +1,9 @@
 import requests
-import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import time
 import os
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,23 +18,23 @@ def connect_google_sheets():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
+    creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    if creds_json:
+        creds_dict = json.loads(creds_json)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    else:
+        creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
     client = gspread.authorize(creds)
     return client.open(SHEET_NAME).sheet1
 
-def load_from_sheet():
-    sheet = connect_google_sheets()
-    data = sheet.get_all_records()
-    return pd.DataFrame(data)
-
-def create_pin(board_id, title, description, link, image_url):
+def create_pin(title, description, link, image_url):
     url = "https://api.pinterest.com/v5/pins"
     headers = {
         "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
     data = {
-        "board_id": board_id,
+        "board_id": BOARD_ID,
         "title": title,
         "description": description,
         "link": link,
@@ -44,58 +44,82 @@ def create_pin(board_id, title, description, link, image_url):
         }
     }
     response = requests.post(url, headers=headers, json=data)
-    if response.status_code == 201:
-        print(f"[OK] Posted: {title}")
-        return True
-    else:
-        print(f"[FAIL] {title} - {response.text}")
-        return False
+    return response.status_code == 201, response.text
 
-def post_all_pins():
-    # Validate env vars
-    if not ACCESS_TOKEN:
-        print("ERROR: PINTEREST_ACCESS_TOKEN not set in .env file")
-        return
-    if not BOARD_ID or BOARD_ID == "your_board_id_here":
-        print("ERROR: PINTEREST_BOARD_ID not set in .env — run get_boards.py first")
+def run():
+    if not ACCESS_TOKEN or not BOARD_ID:
+        print("ERROR: Missing PINTEREST_ACCESS_TOKEN or PINTEREST_BOARD_ID in environment")
         return
 
-    print("Loading products from Google Sheets...")
+    print("Connecting to Google Sheets...")
+    sheet = connect_google_sheets()
+
+    rows = sheet.get_all_values()
+    if len(rows) < 2:
+        print("Sheet is empty or has no data rows.")
+        return
+
+    headers = rows[0]
+    print(f"Columns found: {headers}")
+
+    # Map your exact column names
+    # A=title, B=price, C=image_url, D=description, E=affiliate_link, F=asin, G=added_on, H=posted, I=status
     try:
-        df = load_from_sheet()
-    except Exception as e:
-        print(f"Error loading data: {e}")
+        status_col = headers.index("status") + 1    # Column I
+        posted_col = headers.index("posted") + 1    # Column H
+    except ValueError as e:
+        print(f"ERROR: Column not found in sheet — {e}")
+        print(f"Your columns: {headers}")
         return
 
-    print(f"Found {len(df)} products\n")
-    success_count = 0
-    failed_count = 0
+    posted_count = 0
+    skipped_count = 0
 
-    for index, row in df.iterrows():
-        title = row.get('title', '')
-        image_url = row.get('image_url', '')
-        link = row.get('affiliate_link', '')
-        description = row.get('description', '')
+    for i, row in enumerate(rows[1:], start=2):
+        # Pad short rows
+        row += [""] * (len(headers) - len(row))
+        row_dict = dict(zip(headers, row))
 
-        if not title or not image_url:
-            print(f"[SKIP] Row {index + 1} missing title or image_url")
-            failed_count += 1
+        # Skip if already posted — check BOTH 'posted' and 'status' columns
+        posted_val = row_dict.get("posted", "").strip().lower()
+        status_val = row_dict.get("status", "").strip().lower()
+
+        if posted_val == "yes" or status_val == "posted":
+            skipped_count += 1
             continue
 
-        if create_pin(BOARD_ID, title, description, link, image_url):
-            success_count += 1
+        title       = row_dict.get("title", "").strip()
+        image_url   = row_dict.get("image_url", "").strip()
+        link        = row_dict.get("affiliate_link", "").strip()
+        description = row_dict.get("description", "").strip()
+        price       = row_dict.get("price", "").strip()
+        asin        = row_dict.get("asin", "").strip()
+
+        if not title or not image_url:
+            print(f"Row {i}: Skipping — missing title or image_url")
+            sheet.update_cell(i, status_col, "skipped - missing data")
+            continue
+
+        # Append price to description if available
+        full_description = description
+        if price:
+            full_description = f"{description} | Price: {price}".strip(" |")
+
+        print(f"Row {i}: Posting '{title}'...")
+        success, response_text = create_pin(title, full_description, link, image_url)
+
+        if success:
+            sheet.update_cell(i, posted_col, "yes")       # Column H = yes
+            sheet.update_cell(i, status_col, "posted")    # Column I = posted
+            print(f"Row {i}: ✅ Posted '{title}'")
+            posted_count += 1
         else:
-            failed_count += 1
+            sheet.update_cell(i, status_col, f"failed: {response_text[:80]}")
+            print(f"Row {i}: ❌ Failed '{title}' — {response_text}")
 
-        time.sleep(2)  # Rate limiting
+        time.sleep(2)  # Pinterest rate limit
 
-    print(f"\n{'='*50}")
-    print(f"COMPLETED!")
-    print(f"Success: {success_count}")
-    print(f"Failed:  {failed_count}")
-    print(f"{'='*50}")
+    print(f"\nDone — {posted_count} posted, {skipped_count} already posted and skipped.")
 
 if __name__ == "__main__":
-    print("Pinterest Auto-Poster")
-    print("=" * 50)
-    post_all_pins()
+    run()
