@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: pinterest-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: PINTEREST_ACCESS_TOKEN
+        sync: false
+      - key: PINTEREST_BOARD_ID
+        sync: false
+      - key: SHEET_NAME
+        sync: false
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false
